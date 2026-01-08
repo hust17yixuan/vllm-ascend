@@ -268,7 +268,7 @@ class TokenDispatcherWithMC2(MoETokenDispatcher):
                                                     topk_ids, expert_map,
                                                     mc2_mask,
                                                     global_redundant_expert_num)
-            output = torch_npu.npu_moe_distribute_dispatch_v2(
+        output = torch_npu.npu_moe_distribute_dispatch_v2(
             **kwargs_mc2
         ) if self.enable_dispatch_v2 else torch_npu.npu_moe_distribute_dispatch(
             **kwargs_mc2)
