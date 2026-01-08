@@ -123,6 +123,9 @@ class MoECommMethod(ABC):
         moe_comm_method = get_forward_context().moe_comm_method
         use_A5_quant = kwargs.get("use_A5_quant", False)
         use_fp8_comm = kwargs.get("use_fp8_comm", False)
+        # FIXME(linfeng): currently MC2 op with fp8 communication enconters accuracy issue,
+        # so we force disable it here.
+        use_fp8_comm = False
         act_quant_type, weight_quant_type, \
             scale_type, per_token_scale_type, round_mode = parse_a5_quant_params(**kwargs)
         assert moe_comm_method is not None, "Missing communication context"
@@ -137,7 +140,6 @@ class MoECommMethod(ABC):
                 shared_experts=shared_experts,
                 quantized_x_for_share=quantized_x_for_share,
                 dynamic_scale_for_share=dynamic_scale_for_share,
-                mc2_mask=self.mc2_mask,
                 apply_router_weight_on_input=apply_router_weight_on_input,
                 with_quant=use_fp8_comm,
                 comm_quant_mode=kwargs.get("comm_quant_mode", 2),
@@ -153,7 +155,6 @@ class MoECommMethod(ABC):
                 shared_experts=shared_experts,
                 quantized_x_for_share=quantized_x_for_share,
                 dynamic_scale_for_share=dynamic_scale_for_share,
-                mc2_mask=mc2_mask,
                 apply_router_weight_on_input=apply_router_weight_on_input,
                 with_quant=use_int8_w8a8 or use_int4_w4a8,
                 dynamic_eplb=dynamic_eplb,
