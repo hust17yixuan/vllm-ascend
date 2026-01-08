@@ -256,12 +256,14 @@ class TokenDispatcherWithMC2(MoETokenDispatcher):
         # Apply log2phy if needed
         if log2phy is not None:
             topk_ids = log2phy[topk_ids]
-
+        # FIXME(linfeng): there is hard coding in token_dispatch (e.g., comm_quant_mode and returned
+        # dynamic_scale). The reason is to support unquantized MC2Dispatch with A5. These hard coding
+        # and branching would be elimindated and merged after fp8 communcation is fully supported.
         if self.a5_need_extra_args:
             kwargs_mc2 = self.get_dispatch_mc2_kwargs_A5(hidden_states, topk_weights,
                                                          topk_ids, expert_map,
                                                          global_redundant_expert_num,
-                                                         comm_quant_mode=2 if self.with_quant else 4,
+                                                         comm_quant_mode=4,
                                                          y_dtype=kwargs.get("y_dtype", torch.float8_e4m3fn))
         else:
             kwargs_mc2 = self.get_dispatch_mc2_kwargs(hidden_states, topk_weights,
@@ -313,7 +315,7 @@ class TokenDispatcherWithMC2(MoETokenDispatcher):
             "group_list_type": group_list_type,
             "hidden_states": expand_x,
             "group_list": expert_token_nums,
-            "dynamic_scale": None if self.with_quant else dynamic_scale,
+            # "dynamic_scale": None if self.with_quant else dynamic_scale,
             "context_metadata": context_metadata
         }
 

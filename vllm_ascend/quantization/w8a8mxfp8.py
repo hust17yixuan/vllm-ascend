@@ -235,11 +235,11 @@ class AscendW8A8MXFP8DynamicFusedMoEMethod:
             # FIXME(linfeng): currently we have to force contiguous here for weight and weight_scale of GMM.
             # Have to investigate performance impact and root cause.
             layer.w13_weight.data = layer.w13_weight.data.transpose(
-                1, 2).contiguous()
+                1, 2)
             layer.w2_weight.data = layer.w2_weight.data.transpose(
-                1, 2).contiguous()
-            layer.w13_weight_scale.data = layer.w13_weight_scale.data.transpose(1, 2).contiguous()
-            layer.w2_weight_scale.data = layer.w2_weight_scale.data.transpose(1, 2).contiguous()
+                1, 2)
+            layer.w13_weight_scale.data = layer.w13_weight_scale.data.transpose(1, 2)
+            layer.w2_weight_scale.data = layer.w2_weight_scale.data.transpose(1, 2)
 
 
 
