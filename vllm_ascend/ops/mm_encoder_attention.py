@@ -121,15 +121,15 @@ class AscendMMEncoderAttention(MMEncoderAttention):
         cu_seqlens = torch.diff(cu_seqlens).to("cpu")
 
         # operator requires pta version >= 2.5.1
-        torch_npu._npu_flash_attention_unpad(
+        context_layer, _ = torch_npu.npu_fused_infer_attention_score_v2(
             query=q,
             key=k,
             value=v,
-            seq_len=cu_seqlens,
-            scale_value=self.head_size**-0.5,
-            num_heads=self.num_heads,
-            num_kv_heads=self.num_kv_heads,
-            out=context_layer,
+            actual_seq_qlen=cu_seqlens.cumsum(0),
+            actual_seq_kvlen=cu_seqlens.cumsum(0),
+            num_query_heads=self.num_heads,
+            num_key_value_heads=self.num_kv_heads,
+            input_layout="TND"
         )
 
         if enable_pad:
