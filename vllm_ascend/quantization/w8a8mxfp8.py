@@ -76,9 +76,12 @@ class AscendW8A8MXFP8DynamicLinearMethod:
             tp_rank: Optional[int] = 0,
     ) -> torch.Tensor:
 
+        x = x.view(-1, x.shape[-1])
         quantized_x, dynamic_scale = torch_npu.npu_dynamic_mx_quant(x, dst_type=torch.float8_e4m3fn)
         pertoken_scale = dynamic_scale
         output_dtype = x.dtype
+        if bias is not None:
+            bias = bias.to(torch.float32)
 
         output = torch_npu.npu_quant_matmul(
             quantized_x,
@@ -91,6 +94,8 @@ class AscendW8A8MXFP8DynamicLinearMethod:
             output_dtype=output_dtype,
             group_sizes=[1, 1, GROUP_SIZE]
         )
+        if "visual" in layer.prefix:
+            output = output.view(-1, 1, output.shape[-1])
 
         return output
 
