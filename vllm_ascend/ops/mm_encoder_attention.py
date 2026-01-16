@@ -21,6 +21,7 @@ import torch.nn.functional as F
 import torch_npu
 from vllm.attention.layers.mm_encoder_attention import MMEncoderAttention
 from vllm.config import MultiModalConfig
+import math
 
 import vllm_ascend.envs as envs_ascend
 
@@ -121,16 +122,19 @@ class AscendMMEncoderAttention(MMEncoderAttention):
         cu_seqlens = torch.diff(cu_seqlens).to("cpu")
 
         # operator requires pta version >= 2.5.1
-        context_layer, _ = torch_npu.npu_fused_infer_attention_score_v2(
+        dim = query.shape[-1]
+        scale = 1/math.sqrt(dim)
+
+        context_layer = torch_npu.npu_fusion_attention(
             query=q,
             key=k,
             value=v,
-            actual_seq_qlen=cu_seqlens.cumsum(0),
-            actual_seq_kvlen=cu_seqlens.cumsum(0),
-            num_query_heads=self.num_heads,
-            num_key_value_heads=self.num_kv_heads,
-            input_layout="TND"
-        )
+            actual_seq_qlen=list(cu_seqlens.cumsum(0)),
+            actual_seq_kvlen=list(cu_seqlens.cumsum(0)),
+            head_num=self.num_heads,
+            scale=scale,
+            inpuit_layout="TND"
+        )[0]
 
         if enable_pad:
             context_layer = context_layer[..., :origin_shape]
