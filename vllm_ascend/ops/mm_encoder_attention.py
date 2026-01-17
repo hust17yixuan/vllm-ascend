@@ -133,7 +133,7 @@ class AscendMMEncoderAttention(MMEncoderAttention):
             actual_seq_kvlen=list(cu_seqlens.cumsum(0)),
             head_num=self.num_heads,
             scale=scale,
-            inpuit_layout="TND"
+            input_layout="TND"
         )[0]
 
         if enable_pad:
