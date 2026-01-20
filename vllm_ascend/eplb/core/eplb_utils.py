@@ -37,9 +37,24 @@ def expert_file_to_tensor(expert_map_path, layer_id):
     if layer_id == data["moe_layer_count"]:
         logger.warning("Init expert map of mtp/eagle when using sample.")
         return None, None
+    device_count = data["layer_list"][layer_id]["device_count"]
+    if data["layer_list"][layer_id]["layer_id"] != layer_id:
+        raise ValueError("Invalid layer_id in EPLB Table")
+    if device_count != len(data["layer_list"][layer_id]["device_list"]):
+        raise ValueError("Invalid device_count or device_list in EPLB Table")
+    expected_devices = set([i for i in range(device_count)])
+    table_devices = set()
     for device in data["layer_list"][layer_id]["device_list"]:
         physical_count += len(device["device_expert"])
         device_data.append(device["device_expert"])
+        if device["device_id"] in table_devices:
+            raise ValueError("Duplicate device_id in EPLB Table")
+        if not (0 <= device["device_id"] < device_count):
+            raise ValueError("Invalid device_id in EPLB Table")
+        table_devices.add(device["device_id"])
+    rest_devices = expected_devices - set(table_devices)
+    if rest_devices:
+        raise ValueError("Missing device_id in EPLB Table")
     global_placement = torch.tensor(device_data, dtype=torch.int32)
     return global_placement, physical_count
 
@@ -64,17 +79,16 @@ def init_eplb_config(ascend_config, layer_id, moe_config):
     eplb_enable = ascend_config.dynamic_eplb or ascend_config.expert_map_record_path
     n_redundant = ascend_config.init_redundancy_expert if eplb_enable else 0
     if expert_map_path:
-        if not (os.path.exists(expert_map_path)
-                and os.access(expert_map_path, os.R_OK)):
-            raise ValueError("Invalid EPLB path")
+        EPLBParamUtils.check_expert_map_path(expert_map_path)
         eplb_enable = True
         global_placement, physical_count = expert_file_to_tensor(
             expert_map_path, layer_id)
+        validate_global_placement(global_placement, ep_size, n_experts)
         if physical_count is not None:
             n_redundant = physical_count - n_experts
             if not moe_config.supports_eplb:
                 raise ValueError(
-                    "Eplb supports only w8a8_dynamic quantization.")
+                    "Eplb supports only w8a8_dynamic、w8a8mxfp8 quantization.")
         else:
             eplb_enable = False
 
@@ -96,6 +110,18 @@ def init_eplb_config(ascend_config, layer_id, moe_config):
         global_expert_map, moe_config.ep_rank).npu() if eplb_enable else None
 
     return local_expert_map, log2phy, n_redundant
+
+
+def validate_global_placement(global_placement, ep_size, n_experts):
+    if global_placement.dim() != 2:
+        raise ValueError(f"The global_placement must be 2D, got {global_placement.dim()}D tensor, invalid EPLB table")
+    if global_placement.shape[0] != ep_size:
+        raise ValueError(f"The global_placement first dim ({global_placement.shape[0]}) != ep_size ({ep_size}), invalid EPLB table")
+    flat = global_placement.flatten().cpu().numpy()
+    unique_vals = set(flat)
+    for v in unique_vals:
+        if not (0 <= int(v) < n_experts):
+            raise ValueError(f"Invalid expert index {v} in global_placement. Must be integer in [0, {n_experts}), invalid EPLB table")
 
 
 def generate_log2phy_map(global_expert_map, ep_rank):
@@ -158,13 +184,6 @@ class EPLBParamUtils:
             raise TypeError("The expert_map is not json.")
         if not os.path.exists(expert_map):
             raise ValueError("The expert_map is not exist.")
-        try:
-            with open(expert_map, "w", encoding='utf-8') as f:
-                f.read()
-        except Exception as e:
-            raise IOError(
-                f"Fail read expert info from {expert_map}, please check the reading permission of {expert_map} : {e}"
-            )
 
     @staticmethod
     def check_expert_map_record_path(expert_map_record_path):
@@ -181,6 +200,7 @@ class EPLBParamUtils:
             raise ValueError(
                 'Can not enable expert_map_record_path when not export EXPERT_MAP_RECORD="true".'
             )
+        os.makedirs(os.path.dirname(expert_map_record_path), exist_ok=True)
         try:
             with open(expert_map_record_path, "w", encoding='utf-8') as f:
                 f.write("")
