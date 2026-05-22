@@ -121,17 +121,19 @@ class BaseDeviceAdaptor:
         use_mxfp_quant: bool = False,
         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,
         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,
+        swiglu_limit: int = 0,
     ):
         if use_mxfp_quant:
             raise RuntimeError("MXFP MoE quantization is only supported on Ascend A5.")
 
-        return torch.ops._C_ascend.grouped_matmul_swiglu_quant(
+        return torch.ops._C_ascend.grouped_matmul_swiglu_quant_weight_nz(
             x=x,
             weight=weight,
+            group_list=group_list,
             weight_scale=weight_scale,
             x_scale=x_scale,
-            group_list=group_list,
-            bias=bias,
+            bias=None,
+            swiglu_limit=swiglu_limit,
         )
 
     @staticmethod
@@ -418,6 +420,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
         use_mxfp_quant: bool = False,
         act_quant_type: torch.dtype | int = torch.float8_e4m3fn,
         weight_quant_type: torch.dtype | int = torch.float8_e4m3fn,
+        swiglu_limit: int = 0,
     ):
         if not use_mxfp_quant:
             return BaseDeviceAdaptor.npu_grouped_matmul_swiglu_quant(
@@ -430,21 +433,43 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
                 use_mxfp_quant=False,
             )
 
-        out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(
-            x=x,
-            weight=[weight],
-            group_list=group_list,
-            weight_scale=[weight_scale],
-            x_scale=x_scale,
-            dequant_mode=2,
-            quant_mode=2,
-            dequant_dtype=torch.float32,
-            quant_dtype=act_quant_type,
-            x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,
-            weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,
-            weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
-            x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
-        )
+        # W4A8 mxfp
+        if act_quant_type == torch.float8_e4m3fn and weight_quant_type == torch_npu.float4_e2m1fn_x2:
+            hidden_states = torch_npu.npu_grouped_matmul(
+                x=[x],
+                weight=[weight],
+                scale=None,
+                antiquant_scale=[weight_scale],
+                scale_dtype=None,
+                per_token_scale=[x_scale],
+                per_token_scale_dtype=torch.float8_e8m0fnu,
+                split_item=2,
+                group_type=0,
+                group_list=group_list,
+                x_dtype=torch.float8_e4m3fn,
+                weight_dtype=torch_npu.float4_e2m1fn_x2,
+                output_dtype=torch.bfloat16
+            )[0]
+            hidden_states = torch_npu.npu_swiglu(hidden_states)
+            out, out_scale = torch_npu.npu_dynamic_mx_quant(
+                hidden_states, dst_type=torch.float8_e4m3fn, round_mode="rint"
+            )
+        else:
+            out, out_scale = torch_npu.npu_grouped_matmul_swiglu_quant_v2(
+                x=x,
+                weight=[weight],
+                group_list=group_list,
+                weight_scale=[weight_scale],
+                x_scale=x_scale,
+                dequant_mode=2,
+                quant_mode=2,
+                dequant_dtype=torch.float32,
+                quant_dtype=act_quant_type,
+                x_dtype=act_quant_type if act_quant_type in QUANT_DTYPES else None,
+                weight_dtype=weight_quant_type if weight_quant_type in QUANT_DTYPES else None,
+                weight_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
+                x_scale_dtype=FLOAT8_E8M0FNU_DTYPE,
+            )
         return out, A5DeviceAdaptor.maybe_normalize_mxfp_scale_layout(out_scale), None
 
     @staticmethod
@@ -596,10 +621,10 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
             kv_cache=decode_k_nope,
             kr_cache=decode_k_pe,
             cache_index=attn_metadata.slot_mapping[:bsz].view(bsz, -1).to(torch.int64),
-            dequant_scale_x=dynamic_scale.view(FLOAT8_E8M0FNU_DTYPE),
-            dequant_scale_w_dq=atten_obj.weight_dq_scale.view(FLOAT8_E8M0FNU_DTYPE),
-            dequant_scale_w_uq_qr=atten_obj.weight_uq_qr_scale.view(FLOAT8_E8M0FNU_DTYPE),
-            dequant_scale_w_dkv_kr=atten_obj.weight_dkv_kr_scale.view(FLOAT8_E8M0FNU_DTYPE),
+            dequant_scale_x=dynamic_scale.view(torch.float8_e8m0fnu),
+            dequant_scale_w_dq=atten_obj.weight_dq_scale.view(torch.float8_e8m0fnu),
+            dequant_scale_w_uq_qr=atten_obj.weight_uq_qr_scale.view(torch.float8_e8m0fnu),
+            dequant_scale_w_dkv_kr=atten_obj.weight_dkv_kr_scale.view(torch.float8_e8m0fnu),
             cache_mode="PA_BSND",
             query_quant_mode=0,
             weight_quant_mode=3,

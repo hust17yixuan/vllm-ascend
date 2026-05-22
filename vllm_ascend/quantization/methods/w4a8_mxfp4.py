@@ -78,15 +78,12 @@ class AscendW4A8MXFPDynamicLinearMethod(AscendLinearScheme):
     ) -> torch.Tensor:
         quantized_x, dynamic_scale = torch_npu.npu_dynamic_mx_quant(x, dst_type=torch.float8_e4m3fn)
 
-        x2_scale = (
-            layer.weight_scale.transpose(-1, -2).reshape(-1, layer.weight_scale.shape[0] // 2, 2).transpose(-3, -2)
-        )
         output_dtype = x.dtype if not isinstance(x, tuple) else x[0].dtype
 
         output = torch_npu.npu_quant_matmul(
             quantized_x,
             layer.weight,
-            x2_scale,
+            layer.weight_scale,
             scale_dtype=torch_npu.float8_e8m0fnu,
             pertoken_scale=dynamic_scale,
             pertoken_scale_dtype=torch_npu.float8_e8m0fnu,
@@ -102,8 +99,9 @@ class AscendW4A8MXFPDynamicLinearMethod(AscendLinearScheme):
         layer.weight.data = torch_npu.npu_format_cast(
             layer.weight.data, 29, customize_dtype=torch.float8_e4m3fn, input_dtype=torch_npu.float4_e2m1fn_x2
         )
-        layer.weight.data = layer.weight.data.transpose(0, 1)
-        layer.weight_scale.data = layer.weight_scale.data.transpose(0, 1)
+        layer.weight.data = layer.weight.data.transpose(-1, -2)
+        n, k = layer.weight_scale.shape
+        layer.weight_scale.data = layer.weight_scale.data.reshape(n, k // 2, 2).transpose(-3, -2)
 
 
 @register_scheme("W4A8_MXFP", "moe")
@@ -174,6 +172,7 @@ class AscendW4A8MXFPDynamicFusedMoEMethod(AscendMoEScheme):
         activation: str = "silu",
         apply_router_weight_on_input: bool = False,
         mc2_mask: torch.Tensor | None = None,
+        tid2eid: torch.Tensor | None = None,
     ) -> torch.Tensor:
         num_shared_experts = getattr(layer, "n_shared_experts", 0)
         if num_shared_experts is None:
@@ -197,6 +196,7 @@ class AscendW4A8MXFPDynamicFusedMoEMethod(AscendMoEScheme):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
             num_experts=num_logical_experts,
+            tid2eid=tid2eid,
         )
 
         # this is a naive implementation for experts load balance so as
